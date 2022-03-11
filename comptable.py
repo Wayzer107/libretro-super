@@ -29,7 +29,7 @@ SUBCORE_SUFFIXES = [
 
     # Beetle PSX
     "hw",
-    
+
     # Quake
     "rogue", "xatrix", "zaero",
 
@@ -100,7 +100,7 @@ features_platforms = {
     'osx-ppc': [x for x in DESKTOP_PPC if x != 'c++14']
 }
 features_cores = {
-    '3dengine': ['gl2'], # Should be gl2 or gles2 but current bugs prevent operating with gles2
+    '3dengine': ['gl2'],
     'atari800': ['libco'],
     'blastem': ['x86_any'],
     'boom3': ['gl1'],
@@ -110,7 +110,6 @@ features_cores = {
     'bsnes-libretro-cplusplus98': ['libco'],
     'bsnes-hd': ['libco'],
     'bsnes-mercury': ['libco'],
-    'chailove': ['physfs', 'thread-local', 'threads'],
     'citra': ['gfxaccel'],
     'citra2018': ['gfxaccel'],
     'Craft': ['gfxaccel'],
@@ -139,13 +138,11 @@ features_cores = {
     'tic80': ['little_endian'],
     'vitaquake3': ['gl1'],
     'vitavoyager': ['gl1'],
-    'yabasanshiro': ['gfxaccel']
+    'yabasanshiro': ['gfxaccel'],
 }
 
 def strip_suffix(s, suffix):
-    if s.endswith(suffix):
-        return s[:-len(suffix)]
-    return s
+    return s[:-len(suffix)] if s.endswith(suffix) else s
 
 def strip_suffixes(s, suffixes):
     r = s
@@ -155,9 +152,7 @@ def strip_suffixes(s, suffixes):
 
 
 def strip_prefix(s, prefix):
-    if s.startswith(prefix):
-        return s[len(prefix):]
-    return s
+    return s[len(prefix):] if s.startswith(prefix) else s
 
 def strip_prefixes(s, prefixes):
     r = s
@@ -166,12 +161,12 @@ def strip_prefixes(s, prefixes):
     return r
 
 def file_to_platform(fname):
-    s = strip_suffixes(fname, [
+    s = strip_suffixes(fname, ([
         "-legacy", "-mingw",
 
         # Mupen64
         "-gles2", "-gles3",
-    ] + ["-" + x for x in SUBCORE_SUFFIXES])
+    ] + [f"-{x}" for x in SUBCORE_SUFFIXES]))
     s = strip_prefixes(s, ["libretro-", "build-", "static-",
                            "retroarch-", "dummy-", "deps:", "test:"])
 #    for infix in ["msvc05", "msvc10"]:
@@ -179,8 +174,13 @@ def file_to_platform(fname):
     mp = {'code_quality': None, 'ios-9': 'ios9', 'trigger_static-cores': None, "switch": "libnx-aarch64", "android": None, 'osx': None, 'dingux-arm32': 'miyoo-arm32', 'dingux': 'dingux-mips32', 'linux-x86': 'linux-i686'}
     if s in mp:
         s = mp[s]
-    subcore = list(filter(lambda x: "-" + x + "-" in fname
-                          or fname.endswith("-" + x), SUBCORE_SUFFIXES))
+    subcore = list(
+        filter(
+            lambda x: f"-{x}-" in fname or fname.endswith(f"-{x}"),
+            SUBCORE_SUFFIXES,
+        )
+    )
+
     return (s, "-".join(subcore))
 
 def repo_to_core(repname):
@@ -200,11 +200,17 @@ def page_get(base):
 
 def parse_pipelines(projectid, sha):
     pipelines = requests.get('https://%s/api/v4/projects/%d/pipelines?sha=%s&per_page=20' % (hostname, projectid, sha)).json()
-    for pipeline in pipelines:
-        if pipeline['status'] == 'success':
-#            print(pipeline)
-            return page_get('https://%s/api/v4/projects/%d/pipelines/%d/jobs?' % (hostname, projectid, pipeline['id']))
-    return None
+    return next(
+        (
+            page_get(
+                'https://%s/api/v4/projects/%d/pipelines/%d/jobs?'
+                % (hostname, projectid, pipeline['id'])
+            )
+            for pipeline in pipelines
+            if pipeline['status'] == 'success'
+        ),
+        None,
+    )
 
 projects_all = page_get('https://%s/api/v4/projects?simple=true&' % hostname)
 
@@ -232,10 +238,7 @@ for project in projects:
         (platform, subcore) = file_to_platform(job['name'])
         if platform is None:
             continue
-        if subcore:
-            core = core_base + "-" + subcore
-        else:
-            core = core_base
+        core = f'{core_base}-{subcore}' if subcore else core_base
         allplatformset.add(platform)
         allcores.add(core)
         k = (platform, core)
@@ -245,39 +248,38 @@ for project in projects:
 
 
 allplatforms = sorted(allplatformset)
-cf = open ("comptable.csv", "w")
-c = csv.writer(cf)
+with open ("comptable.csv", "w") as cf:
+    c = csv.writer(cf)
 
-c.writerow([""] + allplatforms)
+    c.writerow([""] + allplatforms)
 
-for core in allcores:
-    row = [core]
-    for platform in allplatforms:
-        k = (platform, core)
-        if k not in coremap: 
-            status = MISSING
-        else:
-            status = OK if any(map(lambda x: x['status'], coremap[k])) else BROKEN
-        corestatus[k] = status
-        if core in features_cores and platform in features_platforms:
-            missing = set(features_cores[core]) - set(features_platforms[platform])
-            if missing:
-                corereason[k] = ','.join(missing)
-            
-                
-for core in sorted (allcores):
-    if core in ('dosbox-libretro',):
-        continue
-    row = [core]
-    for platform in allplatforms:
-        k = (platform, core)
-        st = corestatus[k]
-        s = st
-        if st != OK and k in corereason:
-            s += " (" + corereason[k] + ")"
-        if st == OK and k in corereason:
-            print("%s is enabled on %s despite %s" % (core, platform, corereason[k]))
-        row += [s]
-    c.writerow(row)
+    for core in allcores:
+        row = [core]
+        for platform in allplatforms:
+            k = (platform, core)
+            if k not in coremap: 
+                status = MISSING
+            else:
+                status = OK if any(map(lambda x: x['status'], coremap[k])) else BROKEN
+            corestatus[k] = status
+            if core in features_cores and platform in features_platforms:
+                if missing := set(features_cores[core]) - set(
+                    features_platforms[platform]
+                ):
+                    corereason[k] = ','.join(missing)
 
-cf.close()
+
+    for core in sorted (allcores):
+        if core in ('dosbox-libretro',):
+            continue
+        row = [core]
+        for platform in allplatforms:
+            k = (platform, core)
+            st = corestatus[k]
+            s = st
+            if st != OK and k in corereason:
+                s += f" ({corereason[k]})"
+            if st == OK and k in corereason:
+                print("%s is enabled on %s despite %s" % (core, platform, corereason[k]))
+            row += [s]
+        c.writerow(row)
